@@ -3,7 +3,7 @@ import numpy as np
 import math
 
 
-def data_plots(x, y, vx, vy, t, a):
+def data_plots(x, y, vy, vx, t, a):
     t_graph.append(t)
     x_graph.append(x)
     y_graph.append(y)
@@ -14,6 +14,8 @@ def data_plots(x, y, vx, vy, t, a):
 
 def accel(x, y, vy, vx, time, v_end, m_sum, m_fuel, aoa):
     v_start = np.sqrt(vy ** 2 + vx ** 2)
+    acc = np.sqrt(
+        (acceleration_max * math.sin(math.radians(aoa)) - g_moon) ** 2 + acceleration_max * math.cos(math.radians(aoa)))
     while (vy * vy + vx * vx) ** 0.5 < v_end:
         dt = 0.01
         time += dt
@@ -21,20 +23,20 @@ def accel(x, y, vy, vx, time, v_end, m_sum, m_fuel, aoa):
         y = y + vy * dt + (acceleration_max * math.sin(math.radians(aoa)) - g_moon) * dt * dt / 2
         vy = vy + (acceleration_max * math.sin(math.radians(aoa)) - g_moon) * dt
         vx = vx + acceleration_max * math.cos(math.radians(aoa)) * dt
+        data_plots(x, y, vy, vx, time, acc)
     delta_v = abs(v_start - (np.sqrt(vy ** 2 + vx ** 2)))
     # (vy*vy+vx*vx)**0.5 - v_end = gas_vel_out * ln(m1/mo)
     m1 = (m_sum + m_fuel) / np.exp(delta_v / gas_vel_out)
     m_fuel = m1 - m_sum
-    acc = np.sqrt(
-        (acceleration_max * math.sin(math.radians(aoa)) - g_moon) ** 2 + acceleration_max * math.cos(math.radians(aoa)))
     # print("LAST DATA: T+", time, " POS:", x, y, " VEL:", abs((vy * vy + vx * vx) ** 0.5))
     return x, y, vy, vx, time, m_fuel, acc
 
 
 def vel_x_to_zero(x, y, vy, vx, time, m_sum, m_fuel):
     acceleration = (abs((vy * vy + vx * vx)) - abs(vy * vy)) / (2 * abs(x - space))
+    acc = np.sqrt(acceleration ** 2 + g_moon ** 2)
     if np.sqrt(acceleration ** 2 + g_moon ** 2) > acceleration_max:
-        return x, y, vy, vx, time, -1000
+        return x, y, vy, vx, time, -1000, acc
     v_start = np.sqrt(vy ** 2 + vx ** 2)
     dt = 0.001
     while abs(vx) > 0.3:
@@ -43,19 +45,20 @@ def vel_x_to_zero(x, y, vy, vx, time, m_sum, m_fuel):
         y = y + vy * dt - g_moon * dt * dt / 2
         vy = vy - g_moon * dt
         vx = vx - acceleration * dt
+        data_plots(x, y, vy, vx, time, acc)
     # (vy*vy+vx*vx)**0.5 - v_end = gas_vel_out * ln(m1/mo)
     delta_v = abs(v_start - (np.sqrt(vy ** 2 + vx ** 2)))
     m1 = (m_sum + m_fuel) / np.exp(delta_v / gas_vel_out)
     m_fuel = m1 - m_sum
-    acc = np.sqrt(acceleration ** 2 + g_moon ** 2)
     return x, y, vy, vx, time, m_fuel, acc
 
 
 def landing(x, y, vy, vx, time, m_sum, m_fuel):
     v_start = vy
     acceleration = (abs((vy * vy + vx * vx)) - abs(vx * vx)) / (2 * abs(y - height_end)) + g_moon
+    acc = acceleration - g_moon
     if abs(acceleration - g_moon) > acceleration_max:
-        return x, y, vy, vx, time, -1000
+        return x, y, vy, vx, time, -1000, acc
     while abs(vy) > 0.5:
         dt = 0.001
         time += dt
@@ -64,10 +67,11 @@ def landing(x, y, vy, vx, time, m_sum, m_fuel):
         vy = vy + (acceleration - g_moon) * dt
         if y <= height_end:
             break
+        data_plots(X, Y, velocity_up, velocity_hor, time, acc)
     delta_v = abs(v_start - (np.sqrt(vy ** 2 + vx ** 2)))
     m1 = (m_sum + m_fuel) / np.exp(delta_v / gas_vel_out)
     m_fuel = m1 - m_sum
-    return x, y, vy, vx, time, m_fuel, (acceleration - g_moon)
+    return x, y, vy, vx, time, m_fuel, acc
 
 
 space = 250 * 1000
@@ -123,6 +127,7 @@ for vel_end in range(550, 650):
         time = 0
         mass_bef = mass_fuel
         time_bef = time
+        dt = 0.1
         stages = [["V_x:", 0, "V_y:", 0, "X:", 0, "Y:", 0, "AoA:", 0, "dM/dT:", 0, "Burn time:", 0],
                   ["V_x:", 0, "V_y:", 0, "X:", 0, "Y:", 0, "AoA:", 0, "dM/dT:", 0, "Burn time:", 0],
                   ["V_x:", 0, "V_y:", 0, "X:", 0, "Y:", 0, "AoA:", 0, "dM/dT:", 0, "Burn time:", 0],
@@ -135,8 +140,7 @@ for vel_end in range(550, 650):
         X, Y, velocity_up, velocity_hor, time, mass_fuel, acc = accel(X, Y, velocity_up, velocity_hor, time,
                                                                       vel_end, mass_constant, mass_fuel,
                                                                       aoa)
-        data_plots(X, Y, velocity_up, velocity_hor, time, acc)
-        if mass_fuel <= 0:
+        if mass_fuel <= 0 or Y < height_end:
             continue
         delta_m = abs(mass_fuel - mass_bef) / abs(time - time_bef)
         stages[1][1] = velocity_hor
@@ -146,11 +150,12 @@ for vel_end in range(550, 650):
         stages[1][9] = 'NaN'
         stages[0][11] = delta_m
         stages[0][13] = abs(time - time_bef)
-        X = X + velocity_hor * time_pause
-        Y = Y + velocity_up * time_pause - g_moon * time_pause * time_pause / 2
-        velocity_up = velocity_up - g_moon * time_pause
-        time += time_pause
-        data_plots(X, Y, velocity_up, velocity_hor, time, g_moon)
+        while time < time_pause:
+            time += dt
+            X = X + velocity_hor * dt
+            Y = Y + velocity_up * dt - g_moon * dt * dt / 2
+            velocity_up = velocity_up - g_moon * dt
+            data_plots(X, Y, velocity_up, velocity_hor, time, g_moon)
         aoa = 90
         stages[2][1] = velocity_hor
         stages[2][3] = velocity_up
@@ -164,8 +169,7 @@ for vel_end in range(550, 650):
         X, Y, velocity_up, velocity_hor, time, mass_fuel, acc = vel_x_to_zero(X, Y, velocity_up, velocity_hor,
                                                                               time,
                                                                               mass_constant, mass_fuel)
-        data_plots(X, Y, velocity_up, velocity_hor, time, acc)
-        if mass_fuel <= 0:
+        if mass_fuel <= 0 or Y < height_end:
             continue
         delta_m = abs(mass_fuel - mass_bef) / abs(time - time_bef)
         stages[3][1] = velocity_hor
@@ -180,8 +184,7 @@ for vel_end in range(550, 650):
         X, Y, velocity_up, velocity_hor, time, mass_fuel, acc = landing(X, Y, velocity_up, velocity_hor,
                                                                         time,
                                                                         mass_constant, mass_fuel)
-        data_plots(X, Y, velocity_up, velocity_hor, time, acc)
-        if mass_fuel <= 0:
+        if mass_fuel <= 0 or Y < height_end:
             continue
         delta_m = abs(mass_fuel - mass_bef) / abs(time - time_bef)
         aoa = 0
@@ -197,26 +200,25 @@ for vel_end in range(550, 650):
                         print(stages[i][j], end=' ')
                 print()
             print("LANDING COMPLETE")
-            print("T+", round(time, 1))
+            print("T+", round(time, 1), "X:", X, "Y:", Y, "VEL_Y:", velocity_up, "VEL_X:", velocity_hor)
             break
-
 fig1 = plt.figure()
 fig2 = plt.figure()
 fig3 = plt.figure()
-pos = fig1.add_subplot(211)
+pos = fig1.add_subplot()
 pos.set_xlabel('X')
 pos.set_ylabel('Y')
 pos.set_title('y=f(x)')
-plt.plot(x_graph, y_graph)
-v = fig2.add_subplot(223)
+pos.plot(x_graph, y_graph)
+v = fig2.add_subplot()
 v.set_xlabel('T')
 v.set_ylabel('V')
 v.set_title('v=f(t)')
 v.plot(t_graph, v_t_graph)
-a = fig2.add_subplot(224)
+a = fig3.add_subplot()
 a.set_xlabel('T')
 a.set_ylabel('A')
 a.set_title('a=f(t)')
-plt.plot(t_graph, a_t_graph)
+a.plot(t_graph, a_t_graph)
 
 plt.show()
